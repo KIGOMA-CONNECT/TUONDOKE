@@ -1,0 +1,32 @@
+version: "3.9"
+services:
+  api:
+    build: .
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./server/data:/app/server/data
+    environment:
+      - NODE_ENV=production
+      - PORT=3100
+      - NIKONEKTI_SECRET=${NIKONEKTI_SECRET:-change-me-in-production}
+      - CORS_ORIGIN=${CORS_ORIGIN:-https://tuondoke.com}
+      - MPESA_CONSUMER_KEY=${MPESA_CONSUMER_KEY}
+      - MPESA_CONSUMER_SECRET=${MPESA_CONSUMER_SECRET}
+      - MPESA_SHORTCODE=${MPESA_SHORTCODE:-174379}
+      - MPESA_PASSKEY=${MPESA_PASSKEY}
+      - MPESA_CALLBACK_URL=${MPESA_CALLBACK_URL}
+      - AT_API_KEY=${AT_API_KEY}
+      - AT_USERNAME=${AT_USERNAME}
+      - AT_SENDER_ID=${AT_SENDER_ID:-TUONDOKE}
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3100/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
