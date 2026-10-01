@@ -16,7 +16,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const r = await api('GET', '/auth/me', undefined, token);
       if (r.status === 200) setUser(r.json);
-      else { setUser(null); setToken(null); localStorage.removeItem('token'); }
+      else { setUser(null); setToken(null); localStorage.removeItem('token'); localStorage.removeItem('refreshToken'); }
     } catch { setUser(null); }
     setLoading(false);
   };
@@ -28,12 +28,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (r.status === 200 && r.json.token) {
       setToken(r.json.token);
       localStorage.setItem('token', r.json.token);
+      if (r.json.refreshToken) localStorage.setItem('refreshToken', r.json.refreshToken);
       setUser(r.json.user);
     }
     return r;
   };
 
-  const logout = () => { setUser(null); setToken(null); localStorage.removeItem('token'); };
+  const logout = () => { setUser(null); setToken(null); localStorage.removeItem('token'); localStorage.removeItem('refreshToken'); };
 
   return <Ctx.Provider value={{ user, token, login, logout, refresh, loading }}>{children}</Ctx.Provider>;
 }

@@ -49,6 +49,76 @@ export function Input({ label, value, onChange, type, placeholder }: { label: st
   );
 }
 
+export function Select({ label, value, onChange, options, placeholder }: { label?: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; placeholder?: string }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      {label && <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 4, color: '#555' }}>{label}</label>}
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        style={{ width: '100%', padding: '10px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 15, outline: 'none', background: '#fff' }}
+      >
+        {placeholder && <option value="">{placeholder}</option>}
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+export function TextArea({ label, value, onChange, placeholder, rows }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; rows?: number }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 4, color: '#555' }}>{label}</label>
+      <textarea
+        value={value}
+        rows={rows || 3}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        style={{ width: '100%', padding: '10px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 15, outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
+      />
+    </div>
+  );
+}
+
+export function Toggle({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f0f0f0', gap: 12 }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 14 }}>{label}</div>
+        {hint && <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{hint}</div>}
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange(!checked)}
+        aria-pressed={checked}
+        style={{ flex: 'none', padding: '6px 16px', borderRadius: 6, background: checked ? '#4caf50' : '#ddd', color: checked ? '#fff' : '#666', fontSize: 12, fontWeight: 700, border: 'none', cursor: 'pointer' }}
+      >
+        {checked ? 'ON' : 'OFF'}
+      </button>
+    </div>
+  );
+}
+
+export function ProgressBar({ value, max, color }: { value: number; max: number; color?: string }) {
+  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
+  const tone = color || (pct >= 90 ? '#f44336' : pct >= 70 ? '#ff9800' : '#4caf50');
+  return (
+    <div style={{ width: '100%', height: 12, background: '#eee', borderRadius: 6, overflow: 'hidden' }}>
+      <div style={{ width: `${pct}%`, height: '100%', background: tone, borderRadius: 6, transition: 'width 0.3s' }} />
+    </div>
+  );
+}
+
+export function Note({ children, tone }: { children: ReactNode; tone?: 'ok' | 'warn' | 'info' }) {
+  const styles = {
+    ok: { background: '#e8f5e9', color: '#2e7d32' },
+    warn: { background: '#ffebee', color: '#c62828' },
+    info: { background: '#e3f2fd', color: '#1565c0' },
+  } as const;
+  const s = styles[tone || 'ok'];
+  return <div style={{ background: s.background, color: s.color, padding: 10, borderRadius: 8, fontSize: 13, marginBottom: 12 }}>{children}</div>;
+}
+
 export function Stat({ label, value, color }: { label: string; value: string | number; color?: string }) {
   return (
     <div style={{ textAlign: 'center', flex: 1, minWidth: 80 }}>
