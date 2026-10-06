@@ -1,0 +1,16 @@
+# TUONDOKE
+TUONDOKE ni mfumo wa usafirishaji, mizigo, pochi ya kidijitali na logistics Tanzania.
+
+## Pages
+- /
+- /login
+- /register
+
+## APIs
+/api/health - Health check
+/api/auth/* - Authentication
+/api/rides/* - Rides
+
+## Features
+- Ride hailing, cargo, wallet, insurance, membership
+- Sync endpoints for recurring, budget, savings, activity log
