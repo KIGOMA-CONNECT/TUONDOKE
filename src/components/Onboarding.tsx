@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Btn } from '../ui';
 
@@ -56,3 +56,4 @@ export default function Onboarding({ onDone }: { onDone?: () => void }) {
     </div>
   );
 }
+
