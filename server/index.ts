@@ -15,6 +15,10 @@ import { expireOldPoints } from './services/loyalty.js';
 // Routes
 import authRoutes from './routes/auth.js';
 import walletRoutes from './routes/wallet.js';
+import {
+  recurringRouter, budgetRouter, standingOrdersRouter,
+  savingsRouter, activityRouter, backupCodesRouter,
+} from './routes/sync.js';
 import ridesRoutes from './routes/rides.js';
 import driverRoutes from './routes/driver.js';
 import reviewsRoutes from './routes/reviews.js';
@@ -94,7 +98,13 @@ app.get('/api/health', (_req, res) => {
 // Mount routes
 app.use('/api/auth', authRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/wallet/standing-orders', standingOrdersRouter);
+app.use('/api/wallet/savings', savingsRouter);
+app.use('/api/rides/recurring', recurringRouter);
 app.use('/api/rides', ridesRoutes);
+app.use('/api/budget', budgetRouter);
+app.use('/api/activity-log', activityRouter);
+app.use('/api/auth/2fa/backup-codes', backupCodesRouter);
 app.use('/api/driver', driverRoutes);
 app.use('/api/reviews', reviewsRoutes);
 app.use('/api/admin', adminRoutes);

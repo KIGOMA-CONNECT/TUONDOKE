@@ -119,7 +119,7 @@ export function apiKeyAuth(req: Request, res: Response, next: NextFunction): voi
 
 type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 
-export function circuitFetch(url: string, options: RequestInit = {}): { fetch: () => Promise<Response>; reset: () => void; getState: () => CircuitState } {
+export function circuitFetch(url: string, options: RequestInit = {}): { fetch: () => Promise<globalThis.Response>; reset: () => void; getState: () => CircuitState } {
   let state: CircuitState = 'CLOSED';
   let failures = 0;
   let lastFailure = 0;
@@ -127,7 +127,7 @@ export function circuitFetch(url: string, options: RequestInit = {}): { fetch: (
   const resetTimeout = 30000;
 
   return {
-    async fetch(): Promise<Response> {
+    async fetch(): Promise<globalThis.Response> {
       if (state === 'OPEN') {
         if (Date.now() - lastFailure > resetTimeout) {
           state = 'HALF_OPEN';

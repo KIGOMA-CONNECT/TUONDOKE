@@ -7,6 +7,7 @@ import {
   readLocal, writeLocal, removeLocal, randomCode, saveTextFile,
   getActivity, clearActivity, logActivity, deviceInfo, type ActivityEntry,
 } from '../prefs';
+import { activityApi, backupCodesApi } from '../sync';
 
 const BACKUP_CODE_COUNT = 10;
 
@@ -99,7 +100,7 @@ export default function Profile() {
             <Card style={{ background: '#f5f5f5', marginBottom: 12 }}>
               <div style={{ fontSize: 12, color: '#666' }}>Kitambulisho: #{user?.id} · Kifunguo cha nyumbani: {(user as any)?.referral_code || '—'}</div>
               <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>Hali ya uthibitishaji: {user?.verified ? 'Imethibitishwa' : 'Haijathibitishwa bado'}</div>
-              <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>Kifaa: {deviceInfo()}</div>
+              <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>Kifaa: {deviceInfo().plat} · {deviceInfo().lang}</div>
             </Card>
             <div style={{ fontSize: 12, color: '#888' }}>
               Jina, simu na barua pepe zinasasishwa kupitia KYC au msaada wa wateja.
@@ -137,7 +138,7 @@ export default function Profile() {
 
       {tab === '2fa' && <TwoFactorCard token={token!} />}
       {tab === 'notifications' && <NotificationPrefs />}
-      {tab === 'activity' && <ActivityLog />}
+      {tab === 'activity' && <ActivityLog token={token!} />}
       {tab === 'places' && <SavedPlaces token={token!} />}
       {tab === 'routes' && <FavoriteRoutes token={token!} />}
       {tab === 'export' && <DataExport token={token!} />}
@@ -153,24 +154,52 @@ function TwoFactorCard({ token }: { token: string }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+  const [serverCodes, setServerCodes] = useState<{ total: number; remaining: number } | null>(null);
 
   const loadBackup = () => {
     const stored = readLocal<string[]>(BACKUP_CODES_KEY, []);
     if (stored.length) setBackupCodes(stored);
   };
 
+  const serverCodeStatus = useCallback(async () => {
+    const r = await backupCodesApi.list(token);
+    if (r.pending) return;
+    const remaining = r.data.filter(c => !c.used).length;
+    setServerCodes({ total: r.data.length, remaining });
+  }, [token]);
+
   useEffect(() => {
     loadBackup();
     api('GET', '/tfa/status', undefined, token).then(r => {
       if (r.status === 200) setEnabled(!!r.json.enabled);
     });
-  }, [token]);
+    serverCodeStatus();
+  }, [token, serverCodeStatus]);
 
   const generateBackupCodes = (): string[] => {
     const codes = Array.from({ length: BACKUP_CODE_COUNT }, () => randomCode(8).replace(/(.{4})/, '$1-'));
     writeLocal(BACKUP_CODES_KEY, codes);
     setBackupCodes(codes);
     return codes;
+  };
+
+  const regenerateServerCodes = async () => {
+    setBusy(true); setMsg(''); setErr('');
+    const r = await backupCodesApi.generate(token, BACKUP_CODE_COUNT);
+    setBusy(false);
+    if (r.pending) {
+      generateBackupCodes();
+      setMsg('Namba zimeundwa kwenye kifaa — zitasawazishwa mtandaoni');
+    } else {
+      const codes = r.data.codes || [];
+      if (codes.length) {
+        writeLocal(BACKUP_CODES_KEY, codes);
+        setBackupCodes(codes);
+        setMsg('Namba mpya za akiba zimetengenezwa');
+        logActivity('2fa_backup_regen', 'Backup codes regenerated');
+        serverCodeStatus();
+      } else setErr('Imeshindwa kutengeneza namba za akiba');
+    }
   };
 
   const startEnable = async () => {
@@ -258,7 +287,9 @@ function TwoFactorCard({ token }: { token: string }) {
         <>
           <div style={{ borderTop: '1px solid #eee', marginTop: 12, paddingTop: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <span style={{ fontSize: 14, fontWeight: 600 }}>Namba za Akiba ({backupCodes.length}/{BACKUP_CODE_COUNT})</span>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>
+                Namba za Akiba ({serverCodes ? `${serverCodes.remaining}/${serverCodes.total} zinazobaki` : `${backupCodes.length}/${BACKUP_CODE_COUNT}`})
+              </span>
               <button onClick={downloadCodes} disabled={!backupCodes.length} style={{ background: 'none', border: 'none', color: '#2196f3', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
                 ⬇️ Download
               </button>
@@ -268,7 +299,7 @@ function TwoFactorCard({ token }: { token: string }) {
                 {backupCodes.map(c => <Badge key={c}>{c}</Badge>)}
               </div>
             ) : <Empty message="Hakuna namba za akiba" />}
-            <Btn onClick={() => { generateBackupCodes(); setMsg('Namba mpya za akiba zimetengenezwa'); logActivity('2fa_backup_regen', 'Backup codes regenerated'); }} color="#ff9800" style={{ padding: '10px 16px' }}>
+            <Btn onClick={regenerateServerCodes} loading={busy} color="#ff9800" style={{ padding: '10px 16px' }}>
               🔄 Tengeneza Upya
             </Btn>
           </div>
@@ -324,12 +355,31 @@ function NotificationPrefs() {
   );
 }
 
-function ActivityLog() {
+function ActivityLog({ token }: { token: string }) {
   const [logs, setLogs] = useState<ActivityEntry[]>(() => getActivity());
+  const [offline, setOffline] = useState(false);
 
   useEffect(() => {
-    setLogs(getActivity());
-  }, []);
+    let cancelled = false;
+    (async () => {
+      const r = await activityApi.list(token, 50, 0);
+      if (cancelled) return;
+      setOffline(r.fromCache);
+      if (r.data.logs?.length) {
+        setLogs(r.data.logs.map(l => ({ action: l.action, details: l.details, ts: new Date(l.created_at).getTime() })));
+      } else {
+        setLogs(getActivity());
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const wipe = async () => {
+    if (!confirm('Futa historia ya shughuli?')) return;
+    clearActivity();
+    setLogs([]);
+    await activityApi.clear(token);
+  };
 
   const icon = (action: string) => {
     if (action.includes('login') || action.includes('session')) return '🔑';
@@ -349,32 +399,30 @@ function ActivityLog() {
           <h3 style={{ fontSize: 15, fontWeight: 600 }}>📜 Historia ya Shughuli</h3>
           {logs.length > 0 && (
             <button
-              onClick={() => { clearActivity(); setLogs([]); }}
+              onClick={wipe}
               style={{ background: 'none', border: 'none', color: '#f44336', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
             >
               Futa
             </button>
           )}
         </div>
+        {offline && <Note tone="warn">Huna mtandao — inaonyesha shughuli zilizohifadhiwa kwenye kifaa.</Note>}
         {!logs.length && <Empty message="Hakuna shughuli iliyorekodiwa kwenye kifaa hiki" />}
-        {logs.map(l => (
-          <div key={l.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0', borderBottom: '1px solid #f0f0f0' }}>
+        {logs.map((l, i) => (
+          <div key={`${l.ts}_${i}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0', borderBottom: '1px solid #f0f0f0' }}>
             <span style={{ fontSize: 18 }}>{icon(l.action)}</span>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>{l.action}</div>
-              <div style={{ fontSize: 12, color: '#666' }}>{l.details}</div>
-              <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
-                {l.device} · IP: {l.ip || 'haipatikani (kinachotumika kwa kifaa)'}
-              </div>
+              <div style={{ fontSize: 12, color: '#666' }}>{typeof l.details === 'object' ? JSON.stringify(l.details) : l.details}</div>
             </div>
             <div style={{ fontSize: 11, color: '#aaa', whiteSpace: 'nowrap' }}>
-              {new Date(l.created_at).toLocaleString('sw-TZ')}
+              {new Date(l.ts).toLocaleString('sw-TZ')}
             </div>
           </div>
         ))}
       </Card>
       <div style={{ fontSize: 11, color: '#888', marginTop: 8, padding: '0 4px' }}>
-        Ingizo hizi zinarekodiwa kwenye kifaa chako. Namba ya IP haipatikani upande wa kivinjari.
+        Ingizo hizi zinarekodiwa kwenye akaunti yako na kifaa chako. Namba ya IP haipatikani upande wa kivinjari.
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import { useAuth } from '../context';
 import { api, fmt, download } from '../api';
 import { Card, Btn, Input, Select, TextArea, Tabs, Badge, Stat, Error, Empty, Note, ProgressBar } from '../ui';
 import { readLocal, writeLocal, uid, nextRun, daysUntil, sqliteDate, logActivity, type Frequency } from '../prefs';
+import { recurringApi, budgetApi, type RecurringRule as ApiRecurringRule } from '../sync';
 
 const DAYS = ['Jumatatu', 'Jumanne', 'Jumatano', 'Alhamisi', 'Ijumaa', 'Jumamosi', 'Jumapili'];
 
@@ -53,17 +54,7 @@ interface Estimate {
   surge_multiplier: number;
 }
 
-interface RecurringRule {
-  id: string;
-  origin: string;
-  destination: string;
-  vehicle_type: string;
-  time: string;
-  days: number[];
-  interval: Frequency;
-  active: boolean;
-  created_at: string;
-}
+interface RecurringRule extends ApiRecurringRule {}
 
 interface TipRecord {
   trip_id: number;
@@ -410,7 +401,7 @@ export default function Book() {
         />
       )}
 
-      {tab === 'stats' && <TripStats stats={stats} trips={trips} />}
+      {tab === 'stats' && <TripStats stats={stats} trips={trips} token={token!} />}
     </div>
   );
 }
@@ -458,7 +449,7 @@ function ActiveRideCard({
 
       <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
         <Btn onClick={onSos} color="#f44336" style={{ flex: '1 1 120px' }} loading={busy}>🚨 SOS</Btn>
-        <Btn onClick={onShare} color="#2196f3" style={{ flex: '1 1 120px' }}>🔗 Shiriki</Btn>
+        <Btn onClick={() => onShare(ride)} color="#2196f3" style={{ flex: '1 1 120px' }}>🔗 Shiriki</Btn>
         <Btn onClick={onGoSafety} color="#666" style={{ flex: '1 1 120px' }}>🛡️ Usalama</Btn>
       </div>
 
@@ -707,6 +698,13 @@ function RecurringRides({
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  const load = useCallback(async () => {
+    const r = await recurringApi.list(token);
+    if (!r.pending) setRules(r.data as RecurringRule[]);
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
   const persist = (next: RecurringRule[]) => {
     writeLocal('recurring', next);
     setRules(next);
@@ -714,28 +712,38 @@ function RecurringRides({
 
   const toggleDay = (d: number) => setDays(prev => (prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort()));
 
-  const create = () => {
+  const create = async () => {
     if (!origin.trim() || !dest.trim()) { onError('Jaza kuanzia na kufika'); return; }
     if (interval === 'weekly' && days.length === 0) { onError('Chagua siku angalau moja'); return; }
-    const rule: RecurringRule = {
-      id: uid('rr_'),
+    const body = {
       origin: origin.trim(),
       destination: dest.trim(),
       vehicle_type: vehicle,
       time,
       days: interval === 'daily' ? [0, 1, 2, 3, 4, 5, 6] : days,
       interval,
-      active: true,
-      created_at: new Date().toISOString(),
     };
-    persist([rule, ...rules]);
+    const r = await recurringApi.create(token, body);
+    if (r.pending) {
+      const local: RecurringRule = {
+        id: -Date.now(),
+        ...body,
+        active: true,
+        last_run: null,
+        created_at: new Date().toISOString(),
+      } as RecurringRule;
+      persist([local, ...rules]);
+      onOk('Ratiba imeundwa (inapasishwa mtandaoni)');
+    } else {
+      setRules((await recurringApi.list(token)).data);
+      onOk('Ratiba ya safari ya marudio imeundwa');
+    }
     setOrigin(''); setDest(''); setShowForm(false);
-    onOk('Ratiba ya safari ya marudio imeundwa');
   };
 
   const bookNext = async (rule: RecurringRule) => {
     setBusy(true);
-    const when = nextRun(rule.interval, rule.time);
+    const when = new Date(nextRun(rule.time, rule.days));
     const r = await api('POST', '/rides/book', {
       origin: rule.origin,
       destination: rule.destination,
@@ -753,7 +761,21 @@ function RecurringRides({
     } else onError(r.json?.error || 'Imeshindwa kupanga safari');
   };
 
-  const remove = (id: string) => persist(rules.filter(r => r.id !== id));
+  const toggle = async (rule: RecurringRule) => {
+    if (rule.id < 0) {
+      persist(rules.map(r => r.id === rule.id ? { ...r, active: !r.active } : r));
+      return;
+    }
+    await recurringApi.toggle(token, rule.id);
+    setRules((await recurringApi.list(token)).data);
+    onOk(rule.active ? 'Ratiba imesimamishwa' : 'Ratiba imeendeshwa');
+  };
+
+  const remove = async (id: number) => {
+    if (id >= 0) await recurringApi.remove(token, id);
+    persist(rules.filter(r => r.id !== id));
+    setRules((await recurringApi.list(token)).data);
+  };
 
   return (
     <div>
@@ -807,14 +829,20 @@ function RecurringRides({
                 {r.days.map(d => DAYS[d].slice(0, 3)).join(', ')}
               </div>
               <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
-                Safari inayofuata: {nextRun(r.interval, r.time).toLocaleString('sw-TZ')} · ({daysUntil(r.interval, r.time)} siku)
+                Safari inayofuata: {nextRun(r.time, r.days).toLocaleString('sw-TZ')} · ({daysUntil(nextRun(r.time, r.days))} siku)
               </div>
+              {r.id < 0 && (
+                <div style={{ fontSize: 11, color: '#ff9800', marginTop: 4 }}>Inasubiri kusawazishwa mtandaoni</div>
+              )}
             </div>
             <Badge color={r.active ? '#4caf50' : '#9e9e9e'}>{r.active ? 'Inaendelea' : 'Imesimamishwa'}</Badge>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
             <Btn onClick={() => bookNext(r)} loading={busy} style={{ flex: 1, padding: '10px 12px', fontSize: 13 }}>📅 Book safari inayofuata</Btn>
-            <Btn onClick={() => remove(r.id)} color="#f44336" style={{ width: 110 }}>Futa</Btn>
+            <Btn onClick={() => toggle(r)} color={r.active ? '#ff9800' : '#4caf50'} style={{ width: 110, padding: '10px', fontSize: 13 }}>
+              {r.active ? 'Simamisha' : 'Endesha'}
+            </Btn>
+            <Btn onClick={() => remove(r.id)} color="#f44336" style={{ width: 84 }}>Futa</Btn>
           </div>
         </Card>
       ))}
@@ -912,7 +940,7 @@ function SavedPlacesQuick({ token, onPick }: { token: string; onPick: (p: any) =
   );
 }
 
-function TripStats({ stats, trips }: { stats: any; trips: any[] }) {
+function TripStats({ stats, trips, token }: { stats: any; trips: any[]; token: string }) {
   const completed = trips.filter(t => t.status === 'completed');
   const byDay = [0, 0, 0, 0, 0, 0, 0];
   for (const t of completed) {
@@ -943,25 +971,52 @@ function TripStats({ stats, trips }: { stats: any; trips: any[] }) {
         </div>
       </Card>
 
-      <BudgetTracker trips={trips} />
+      <BudgetTracker trips={trips} token={token!} />
     </div>
   );
 }
 
-function BudgetTracker({ trips }: { trips: any[] }) {
+function BudgetTracker({ trips, token }: { trips: any[]; token: string }) {
   const month = new Date().toISOString().slice(0, 7);
   const stored = readLocal<{ limit: number; month: string }>('budget', { limit: 0, month });
-  const limit = stored.month === month ? stored.limit : 0;
+  const [limit, setLimit] = useState(stored.month === month ? stored.limit : 0);
   const [amount, setAmount] = useState(String(limit || ''));
+  const [syncing, setSyncing] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const r = await budgetApi.get(token);
+      if (!cancelled && !r.pending && typeof r.data.monthly_limit === 'number') {
+        setLimit(r.data.monthly_limit);
+        setAmount(String(r.data.monthly_limit || ''));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
 
   const spent = trips
     .filter(t => t.status === 'completed' && String(t.completed_at || t.created_at).slice(0, 7) === month)
     .reduce((sum, t) => sum + fareOf(t), 0);
 
-  const save = () => {
+  const save = async () => {
     const value = parseInt(amount, 10) || 0;
     writeLocal('budget', { limit: value, month });
+    setLimit(value);
     setAmount(String(value || ''));
+    setSyncing(true);
+    await budgetApi.set(token, value);
+    setSyncing(false);
+  };
+
+  const reset = async () => {
+    if (!confirm('Ondoa kipimo cha bajeti?')) return;
+    writeLocal('budget', { limit: 0, month });
+    setLimit(0);
+    setAmount('');
+    setSyncing(true);
+    await budgetApi.reset(token);
+    setSyncing(false);
   };
 
   const pct = limit > 0 ? Math.round((spent / limit) * 100) : 0;
@@ -981,7 +1036,8 @@ function BudgetTracker({ trips }: { trips: any[] }) {
             <div style={{ flex: 1 }}>
               <Input label="Badilisha kipimo (TZS)" value={amount} onChange={setAmount} type="number" placeholder="50000" />
             </div>
-            <Btn onClick={save} style={{ width: 110, marginBottom: 12 }}>Hifadhi</Btn>
+            <Btn onClick={save} loading={syncing} style={{ width: 110, marginBottom: 12 }}>Hifadhi</Btn>
+            <Btn onClick={reset} color="#f44336" style={{ width: 110, marginBottom: 12 }}>Ondoa</Btn>
           </div>
           <div style={{ fontSize: 11, color: '#888' }}>Kipimo hurejeshwa kila mwezi mwenyewe.</div>
         </>

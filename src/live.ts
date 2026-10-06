@@ -115,7 +115,8 @@ export function useLiveStatus(): string {
   useEffect(() => {
     const c = getLiveClient(localStorage.getItem('token') || '');
     setStatus(c.status);
-    return c.onStatus(setStatus);
+    const off = c.onStatus(setStatus);
+    return () => { off(); };
   }, []);
   return status;
 }

@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context';
 import { api, fmt, download } from '../api';
 import { Card, Btn, Input, Select, Tabs, Badge, Stat, Error, Empty, Note } from '../ui';
-import { readLocal, writeLocal, uid, nextRun, sqliteDate, logActivity, type Frequency } from '../prefs';
+import { readLocal, writeLocal, uid, nextOccurrence, sqliteDate, logActivity, type Frequency } from '../prefs';
+import { standingOrderApi, savingsApi } from '../sync';
 
 const FREQUENCIES: { value: Frequency; label: string }[] = [
   { value: 'daily', label: 'Kila siku (daily)' },
@@ -36,7 +37,7 @@ const TX_ICON: Record<string, string> = {
 };
 
 interface StandingOrder {
-  id: string;
+  id: number;
   to_phone: string;
   amount: number;
   frequency: Frequency;
@@ -49,7 +50,7 @@ interface StandingOrder {
 interface SavingsLedger {
   balance: number;
   seeded: number;
-  entries: { id: string; type: 'topup' | 'withdraw' | 'bonus'; amount: number; created_at: string }[];
+  entries: { id: string | number; type: 'topup' | 'withdraw' | 'bonus'; amount: number; created_at: string }[];
 }
 
 export default function Wallet() {
@@ -125,8 +126,8 @@ export default function Wallet() {
     const orders = readLocal<StandingOrder[]>('standing_orders', []).filter(o => o.active);
     let changed = false;
     for (const o of orders) {
-      const due = nextRun(o.frequency, (o.start_date || '08:00').slice(11, 16), o.last_run_at ? new Date(o.last_run_at) : new Date(o.start_date || Date.now()));
-      if (Date.now() < due.getTime()) continue;
+      const due = nextOccurrence(o.frequency, (o.start_date || '08:00').slice(11, 16), o.last_run_at || o.start_date || Date.now()).getTime();
+      if (Date.now() < due) continue;
       const r = await api('POST', '/wallet/transfer', {
         toPhone: o.to_phone,
         amount: o.amount,
@@ -195,7 +196,7 @@ export default function Wallet() {
         <StandingOrders token={token!} onWallet={loadWallet} runDueOrders={runDueOrders} />
       )}
 
-      {tab === 'savings' && <SavingsTab token={token!} wallet={wallet} />}
+      {tab === 'savings' && <SavingsTab token={token!} wallet={wallet} onWallet={loadWallet} />}
 
       {tab === 'transactions' && (
         <Btn onClick={() => download('/data/export/csv?type=transactions', 'tuondoke-transactions.csv')} color="#2196f3" style={{ marginTop: 12 }}>
@@ -533,8 +534,29 @@ function StandingOrders({
   const [amount, setAmount] = useState('');
   const [frequency, setFrequency] = useState<Frequency>('monthly');
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 16));
-  const [busy, setBusy] = useState(false);
+const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [offline, setOffline] = useState(false);
+
+  const refresh = useCallback(async () => {
+    const r = await standingOrderApi.list(token);
+    setOffline(r.fromCache);
+    const rows = r.data as any[];
+    if (rows.length || !r.fromCache) {
+      setOrders(rows.map(o => ({
+        id: o.id,
+        to_phone: o.recipient_phone,
+        amount: o.amount,
+        frequency: o.frequency,
+        start_date: o.start_date,
+        active: o.status === 'active',
+        last_run_at: o.last_run,
+        created_at: o.created_at,
+      })));
+    }
+  }, [token]);
+
+  useEffect(() => { refresh(); }, [refresh]);
 
   const persist = (next: StandingOrder[]) => {
     writeLocal('standing_orders', next);
@@ -545,32 +567,50 @@ function StandingOrders({
     const n = parseInt(amount, 10) || 0;
     if (!to.trim() || n <= 0) { setMsg('Mpokeaji na kiasi zinahitajika'); return; }
     setBusy(true);
-    const order: StandingOrder = {
-      id: uid('so_'),
-      to_phone: to.trim(),
+    const r = await standingOrderApi.create(token, {
+      recipient_phone: to.trim(),
       amount: n,
       frequency,
-      start_date: startDate,
-      active: true,
-      last_run_at: null,
-      created_at: new Date().toISOString(),
-    };
-    persist([order, ...orders]);
-    setTo(''); setAmount('');
-    await runDueOrders();
+      start_date: startDate.slice(0, 10),
+    });
     setBusy(false);
-    setMsg('Order ya kudumu imeundwa');
+    if (r.pending) {
+      persist([{
+        id: -Date.now(),
+        to_phone: to.trim(),
+        amount: n,
+        frequency,
+        start_date: startDate,
+        active: true,
+        last_run_at: null,
+        created_at: new Date().toISOString(),
+      }, ...orders]);
+      setMsg('Order imeundwa (inasubiri mtandao)');
+    } else {
+      await refresh();
+      await runDueOrders();
+      setMsg('Order ya kudumu imeundwa');
+    }
+    setTo(''); setAmount('');
     logActivity('standing_order_created', `${n} → ${to.trim()} (${frequency})`);
   };
 
-  const toggle = async (id: string) => {
-    const next = orders.map(o => (o.id === id ? { ...o, active: !o.active } : o));
-    persist(next);
+  const toggle = async (o: StandingOrder) => {
+    if (o.id >= 0) {
+      if (o.active) await standingOrderApi.suspend(token, o.id);
+      else await standingOrderApi.activate(token, o.id);
+    }
+    persist(orders.map(x => (x.id === o.id ? { ...x, active: !x.active } : x)));
     await runDueOrders();
     await onWallet();
+    if (o.id >= 0) await refresh();
   };
 
-  const remove = (id: string) => persist(orders.filter(o => o.id !== id));
+  const remove = async (o: StandingOrder) => {
+    if (o.id >= 0) await standingOrderApi.remove(token, o.id);
+    persist(orders.filter(x => x.id !== o.id));
+    if (o.id >= 0) await refresh();
+  };
 
   return (
     <div>
@@ -584,6 +624,7 @@ function StandingOrders({
       </Card>
 
       {msg && <Note>{msg}</Note>}
+      {offline && <Note tone="warn">Huna mtandao — maonyesho haya yatoka kwenye kifaa.</Note>}
 
       {!orders.length && <Empty message="Hakuna standing orders" />}
       {orders.map(o => (
@@ -595,16 +636,16 @@ function StandingOrders({
                 TZS {fmt(o.amount)} · {o.frequency} · kuanza {new Date(o.start_date).toLocaleString('sw-TZ')}
               </div>
               <div style={{ fontSize: 11, color: '#999' }}>
-                Mwisho wa kipendekezo: {nextRun(o.frequency, o.start_date.slice(11, 16) || '08:00', o.last_run_at ? new Date(o.last_run_at) : new Date(o.start_date)).toLocaleString('sw-TZ')}
+                Mwisho wa kipendekezo: {nextOccurrence(o.frequency, o.start_date.slice(11, 16) || '08:00', o.last_run_at || o.start_date).toLocaleString('sw-TZ')}
               </div>
             </div>
             <Badge color={o.active ? '#4caf50' : '#9e9e9e'}>{o.active ? 'Active' : 'Imesimamishwa'}</Badge>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <Btn onClick={() => toggle(o.id)} color={o.active ? '#ff9800' : '#4caf50'} style={{ flex: 1, padding: '10px 12px', fontSize: 13 }} loading={busy}>
+            <Btn onClick={() => toggle(o)} color={o.active ? '#ff9800' : '#4caf50'} style={{ flex: 1, padding: '10px 12px', fontSize: 13 }} loading={busy}>
               {o.active ? 'Simamisha' : 'Anza'}
             </Btn>
-            <Btn onClick={() => remove(o.id)} color="#f44336" style={{ width: 100 }}>Futa</Btn>
+            <Btn onClick={() => remove(o)} color="#f44336" style={{ width: 100 }}>Futa</Btn>
           </div>
         </Card>
       ))}
@@ -612,7 +653,7 @@ function StandingOrders({
   );
 }
 
-function SavingsTab({ token, wallet }: { token: string; wallet: any }) {
+function SavingsTab({ token, wallet, onWallet }: { token: string; wallet: any; onWallet: () => Promise<void> }) {
   const serverSavings = wallet?.savings || 0;
   const [ledger, setLedger] = useState<SavingsLedger>(() => readLocal<SavingsLedger>('savings', { balance: 0, seeded: -1, entries: [] }));
   const [topup, setTopup] = useState('');
@@ -620,17 +661,35 @@ function SavingsTab({ token, wallet }: { token: string; wallet: any }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+  const [offline, setOffline] = useState(false);
+
+  const refresh = useCallback(async () => {
+    const r = await savingsApi.transactions(token);
+    setOffline(r.fromCache);
+    if (r.pending) return;
+    if (typeof r.data.balance === 'number') {
+      const entries: SavingsLedger['entries'] = (r.data.transactions || []).map(t => ({
+        id: t.id,
+        type: t.kind === 'withdraw' ? 'withdraw' : 'topup',
+        amount: t.amount,
+        created_at: t.created_at,
+      }));
+      const next: SavingsLedger = { balance: r.data.balance, seeded: r.data.balance, entries };
+      writeLocal('savings', next);
+      setLedger(next);
+    }
+  }, [token]);
 
   useEffect(() => {
-    setLedger(prev => {
-      if (prev.seeded === -1) {
+    if (ledger.seeded === -1) {
+      setLedger(prev => {
         const next: SavingsLedger = { ...prev, balance: serverSavings, seeded: serverSavings };
         writeLocal('savings', next);
         return next;
-      }
-      return prev;
-    });
-  }, [serverSavings]);
+      });
+    }
+    refresh();
+  }, [serverSavings, refresh]);
 
   const balance = ledger.balance || 0;
   const projectedInterest = Math.round((balance * SAVINGS_RATE_PCT) / 100 / 12);
@@ -640,10 +699,9 @@ function SavingsTab({ token, wallet }: { token: string; wallet: any }) {
     const n = parseInt(topup, 10) || 0;
     if (n <= 0) { setErr('Weka kiasi sahihi'); return; }
     setBusy(true); setMsg(''); setErr('');
-    // Money leaves the spendable wallet and is moved into the savings ledger.
-    const r = await api('POST', '/wallet/withdraw', { amount: n }, token);
+    const r = await savingsApi.topup(token, n);
     setBusy(false);
-    if (r.status === 200) {
+    if (r.pending) {
       const next: SavingsLedger = {
         balance: balance + n,
         seeded: ledger.seeded,
@@ -652,9 +710,14 @@ function SavingsTab({ token, wallet }: { token: string; wallet: any }) {
       writeLocal('savings', next);
       setLedger(next);
       setTopup('');
+      setMsg(`Umeweka TZS ${fmt(n)} kwenye akaiba (inasubiri mtandao)`);
+    } else {
+      await refresh();
+      await onWallet();
+      setTopup('');
       setMsg(`Umeweka TZS ${fmt(n)} kwenye akaiba`);
       logActivity('savings_topup', `TZS ${n}`);
-    } else setErr(r.json?.error || 'Imeshindwa kuweka akiba');
+    }
   };
 
   const doWithdraw = async () => {
@@ -662,10 +725,9 @@ function SavingsTab({ token, wallet }: { token: string; wallet: any }) {
     if (n < SAVINGS_MIN_WITHDRAW) { setErr(`Kiasi cha kutoa kinaanza TZS ${fmt(SAVINGS_MIN_WITHDRAW)}`); return; }
     if (n > balance) { setErr('Kiasi kinazidi salio la akaiba'); return; }
     setBusy(true); setMsg(''); setErr('');
-    // Money moves from the savings ledger back into the spendable wallet.
-    const r = await api('POST', '/wallet/deposit', { amount: n, method: 'savings_withdrawal' }, token);
+    const r = await savingsApi.withdraw(token, n);
     setBusy(false);
-    if (r.status === 200) {
+    if (r.pending) {
       const next: SavingsLedger = {
         balance: balance - n,
         seeded: ledger.seeded,
@@ -674,9 +736,14 @@ function SavingsTab({ token, wallet }: { token: string; wallet: any }) {
       writeLocal('savings', next);
       setLedger(next);
       setWithdrawAmt('');
+      setMsg(`Umetoa TZS ${fmt(n)} kwenye akaiba (inasubiri mtandao)`);
+    } else {
+      await refresh();
+      await onWallet();
+      setWithdrawAmt('');
       setMsg(`Umetoa TZS ${fmt(n)} kwenye akaiba`);
       logActivity('savings_withdraw', `TZS ${n}`);
-    } else setErr(r.json?.error || 'Imeshindwa kutoa akaiba');
+    }
   };
 
   return (
@@ -690,6 +757,7 @@ function SavingsTab({ token, wallet }: { token: string; wallet: any }) {
 
       {msg && <Note>{msg}</Note>}
       {err && <Error message={err} />}
+      {offline && <Note tone="warn">Huna mtandao — inaonyesha rekodi za kifaa chako.</Note>}
 
       <Card style={{ marginBottom: 12 }}>
         <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>🏦 Weka kwenye Akiba</h3>

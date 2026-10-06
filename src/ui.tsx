@@ -5,8 +5,8 @@ const PH = '#00C853';
 const TXT = '#1a1a1a';
 const BG = '#f5f5f5';
 
-export function Card({ children, style }: { children: ReactNode; style?: React.CSSProperties }) {
-  return <div style={{ background: '#fff', borderRadius: 12, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', ...style }}>{children}</div>;
+export function Card({ children, style, onClick }: { children: ReactNode; style?: React.CSSProperties; onClick?: () => void }) {
+  return <div onClick={onClick} style={{ background: '#fff', borderRadius: 12, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', ...style }}>{children}</div>;
 }
 
 export function Btn({ children, onClick, color, disabled, style, loading, type }: { children: ReactNode; onClick?: () => void; color?: string; disabled?: boolean; style?: React.CSSProperties; loading?: boolean; type?: 'button' | 'submit' }) {

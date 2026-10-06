@@ -1,7 +1,15 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 
-const VERSIONS = [
+interface ChangelogEntry { type: string; text: string }
+interface ChangelogVersion {
+  version: string;
+  date: string;
+  title: string;
+  changes: ChangelogEntry[];
+}
+
+const VERSIONS: ChangelogVersion[] = [
   {
     version: 'v1.1.0', date: 'Agosti 2026', title: 'Frontend — 19 Kurasa, React + TypeScript',
     changes: [
@@ -38,7 +46,7 @@ const VERSIONS = [
       { type: 'feat', text: 'Pointi za uaminifu na zawadi za upendeleo' },
       { type: 'improvement', text: 'Ulinzi wa helmet, CORS, na kiwango cha ombi' },
       { type: 'improvement', text: 'Mifumo ya idempotency na circuit breaker' },
-      { fix: 'fix', text: 'Usimamizi wa makosa na ufuatiliaji' },
+      { type: 'fix', text: 'Usimamizi wa makosa na ufuatiliaji' },
     ],
   },
 ];

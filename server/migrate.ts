@@ -1,9 +1,11 @@
 import db from './db.js';
 import logger from './logger.js';
 
+type Database = import('better-sqlite3').Database;
+
 interface Migration {
   name: string;
-  up: (db: typeof import('better-sqlite3').default.prototype) => void;
+  up: (db: Database) => void;
 }
 
 const migrations: Migration[] = [
@@ -948,6 +950,95 @@ const migrations: Migration[] = [
         accepted INTEGER DEFAULT 0,
         accepted_at TEXT
       )`);
+    }
+  },
+  {
+    name: '066_recurring_rides',
+    up: (db: any) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS recurring_rides (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        origin TEXT NOT NULL,
+        destination TEXT NOT NULL,
+        vehicle_type TEXT DEFAULT 'boda',
+        time TEXT NOT NULL,
+        days TEXT NOT NULL,
+        interval TEXT DEFAULT 'weekly' CHECK(interval IN ('daily','weekly','monthly')),
+        active INTEGER DEFAULT 1,
+        last_run TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_recurring_user ON recurring_rides(user_id)`);
+    }
+  },
+  {
+    name: '067_user_budgets',
+    up: (db: any) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS user_budgets (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        monthly_limit INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT DEFAULT (datetime('now'))
+      )`);
+    }
+  },
+  {
+    name: '068_standing_orders',
+    up: (db: any) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS standing_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        recipient_phone TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        frequency TEXT DEFAULT 'weekly' CHECK(frequency IN ('daily','weekly','monthly')),
+        start_date TEXT NOT NULL,
+        status TEXT DEFAULT 'active' CHECK(status IN ('active','suspended','cancelled')),
+        last_run TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_so_user ON standing_orders(user_id)`);
+    }
+  },
+  {
+    name: '069_savings_transactions',
+    up: (db: any) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS savings_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        kind TEXT NOT NULL CHECK(kind IN ('topup','withdraw','bonus')),
+        amount INTEGER NOT NULL,
+        balance_after INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now'))
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_savings_user ON savings_transactions(user_id)`);
+    }
+  },
+  {
+    name: '070_activity_logs',
+    up: (db: any) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS activity_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        action TEXT NOT NULL,
+        details TEXT DEFAULT '',
+        ip TEXT DEFAULT '',
+        user_agent TEXT DEFAULT '',
+        created_at TEXT DEFAULT (datetime('now'))
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_logs(user_id, created_at DESC)`);
+    }
+  },
+  {
+    name: '071_backup_codes',
+    up: (db: any) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS user_backup_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        code_hash TEXT NOT NULL,
+        used INTEGER DEFAULT 0,
+        used_at TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_backup_user ON user_backup_codes(user_id)`);
     }
   }
 ];

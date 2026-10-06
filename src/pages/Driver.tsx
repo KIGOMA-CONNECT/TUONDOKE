@@ -261,17 +261,18 @@ function ExpensesTab({ token, setError }: { token: string; setError: (e: string)
   const [amt, setAmt] = useState('');
   const [category, setCategory] = useState('fuel');
   const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
   const load = async () => {
     const r = await api('GET', '/driver/expenses', undefined, token);
     if (r.status === 200) setItems(r.json.expenses || r.json || []);
   };
   useEffect(() => { load(); }, [token]);
   const add = async () => {
-    if (!desc || !amt) { setError('Jaza sehemu zote'); return; }
-    setLoading(true); setError('');
+    if (!desc || !amt) { setErr('Jaza sehemu zote'); return; }
+    setLoading(true); setErr('');
     const r = await api('POST', '/driver/expenses', { description: desc, amount: parseFloat(amt), category }, token);
     if (r.status === 200 || r.status === 201) { setDesc(''); setAmt(''); load(); }
-    else setError(r.json?.error || 'Imeshindwa');
+    else setErr(r.json?.error || 'Imeshindwa');
     setLoading(false);
   };
   const remove = async (id: number) => { await api('DELETE', `/driver/expenses/${id}`, undefined, token); load(); };
@@ -281,7 +282,7 @@ function ExpensesTab({ token, setError }: { token: string; setError: (e: string)
   return (
     <div>
       <Card style={{ marginBottom: 12 }}>
-        {setError && <Error message="" />}
+        {err && <Error message={err} />}
         <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
           {categories.map(c => (
             <button key={c} onClick={() => setCategory(c)} style={{ padding: '5px 10px', borderRadius: 8, border: category === c ? '2px solid #00E676' : '1px solid #ddd', background: category === c ? '#e8f5e9' : '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>{catIcons[c]} {c}</button>
